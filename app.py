@@ -57,7 +57,7 @@ if st.button("Generate Valuation", type="primary"):
     except Exception as e:
         st.error(f"Error processing prediction: {e}")
 
-if st.button("Generate Val", type="primary"):
+if st.button("Generate Report", type="primary"):
     # Map inputs exactly to the training dataframe structure
     input_data = pd.DataFrame([[
         property_type, sector, bedRoom, bathroom, balcony, 
