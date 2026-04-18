@@ -56,3 +56,22 @@ if st.button("Generate Valuation", type="primary"):
         st.metric(label="Estimated Market Value", value=f"₹ {prediction:.2f} Crores")
     except Exception as e:
         st.error(f"Error processing prediction: {e}")
+
+if st.button("Generate Valuation", type="primary"):
+    # Map inputs exactly to the training dataframe structure
+    input_data = pd.DataFrame([[
+        property_type, sector, bedRoom, bathroom, balcony, 
+        agePossession, built_up_area, servant_room, store_room, 
+        furnishing_type, luxury_category, floor_category
+    ]], columns=[
+        'property_type', 'sector', 'bedRoom', 'bathroom', 'balcony', 
+        'agePossession', 'built_up_area', 'servant room', 'store room', 
+        'furnishing_type', 'luxury_category', 'floor_category'
+    ])
+    
+    try:
+        prediction = pipeline.predict(input_data)[0]
+        st.success("Analytics Engine execution complete.")
+        st.metric(label="Estimated Market Value", value=f"₹ {prediction:.2f} Crores")
+    except Exception as e:
+        st.error(f"Error processing prediction: {e}")
