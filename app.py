@@ -10,19 +10,24 @@ from langchain_community.document_loaders import DataFrameLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
+# 1. Page Configuration
 st.set_page_config(page_title="Gurgaon Real Estate Analytics", page_icon="🏡", layout="wide")
 st.title("🏡 Intelligent Property Price Predictor (Gurgaon)")
 st.markdown("Enter the property specifications below to generate an AI-driven valuation and advisory report.")
 
+# Securely load the Groq API Key
 if "GROQ_API_KEY" in st.secrets:
     os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 else:
     st.warning("⚠️ Please add GROQ_API_KEY to your Streamlit secrets!")
 
+# 2. Load the Pipeline & Build the Vector Database (Cached for speed)
 @st.cache_resource(show_spinner="Loading ML Model and Vector Database...")
 def load_resources():
+    # Load ML Model
     ml_pipeline = joblib.load('rf_gurgaon_pipeline_final.pkl')
     
+    # Load Data & Build FAISS Vector Store for "Comps"
     df = pd.read_csv('gurgaon_properties_post_feature_selection_v2.csv')
     df_rag = df.copy()
     df_rag['rag_content'] = df_rag.apply(
@@ -37,7 +42,9 @@ def load_resources():
 
 pipeline, vector_store = load_resources()
 
+# 3. User Interface Layout
 st.header("Property Characteristics")
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -58,14 +65,21 @@ with col3:
     servant_room = st.selectbox("Servant Room", [0.0, 1.0])
     store_room = st.selectbox("Store Room", [0.0, 1.0])
 
+# Prepare input data for the model
 input_data = pd.DataFrame([[
-    property_type, sector, bedRoom, bathroom, balcony, agePossession, built_up_area, servant_room, store_room, furnishing_type, luxury_category, floor_category
+    property_type, sector, bedRoom, bathroom, balcony, 
+    agePossession, built_up_area, servant_room, store_room, 
+    furnishing_type, luxury_category, floor_category
 ]], columns=[
-    'property_type', 'sector', 'bedRoom', 'bathroom', 'balcony', 'agePossession', 'built_up_area', 'servant room', 'store room', 'furnishing_type', 'luxury_category', 'floor_category'
+    'property_type', 'sector', 'bedRoom', 'bathroom', 'balcony', 
+    'agePossession', 'built_up_area', 'servant room', 'store room', 
+    'furnishing_type', 'luxury_category', 'floor_category'
 ])
 
+# 4. Buttons Layout
 btn_col1, btn_col2 = st.columns([1, 1])
 
+# --- GENERATE VALUATION BUTTON ---
 with btn_col1:
     if st.button("Generate Valuation", type="primary", use_container_width=True):
         try:
@@ -75,6 +89,7 @@ with btn_col1:
         except Exception as e:
             st.error(f"Error processing prediction: {e}")
 
+# --- GENERATE REPORT BUTTON ---
 with btn_col2:
     if st.button("Generate AI Advisory Report", type="secondary", use_container_width=True):
         if "GROQ_API_KEY" not in os.environ:
@@ -82,41 +97,68 @@ with btn_col2:
         else:
             with st.spinner("Calculating price, fetching comps, and writing report..."):
                 try:
+                    # 1. Get the ML Prediction
                     prediction = pipeline.predict(input_data)[0]
                     
+                    # 2. Retrieve actual comparables (Comps) from the FAISS database
                     search_query = f"{bedRoom} BHK {property_type} in {sector} luxury {luxury_category}"
                     retrieved_docs = vector_store.similarity_search(search_query, k=3)
                     comps_text = "\n".join([doc.page_content for doc in retrieved_docs])
                     
+                    # 3. Setup Groq LLM enforcing JSON output
                     llm = ChatGroq(
                         model="llama-3.3-70b-versatile",
                         temperature=0.2, 
                         model_kwargs={"response_format": {"type": "json_object"}} 
                     )
                     
+                    # 4. Construct the Prompts
                     system_prompt = """
                     You are an elite real estate advisor in Gurgaon.
+                    You will be provided with a hypothetical property, its estimated AI valuation, and real database comparables (comps).
+                    
                     Always respond ONLY in this strictly formatted JSON object:
                     {
-                      "summary": "Executive overview of the property and valuation.",
-                      "comps": "Analysis of how this property compares to the real comparables.",
-                      "recommendation": "Buy/Sell/Hold advice with justification.",
-                      "risk": "Potential market or property risks.",
-                      "disclaimer": "Standard real estate disclaimer."
+                      "summary": "A 2-3 sentence executive overview of the property and its valuation.",
+                      "comps": "A brief analysis of how this property compares to the provided real comparables.",
+                      "recommendation": "Buy/Sell/Hold advice with a short justification.",
+                      "risk": "Potential market or property-specific risks (e.g., area, age, luxury category).",
+                      "disclaimer": "A standard real estate advisory disclaimer."
                     }
                     """
                     
-                    human_prompt = f"""Target Property: {bedRoom} BHK {property_type}, {sector}, {built_up_area} sqft, {agePossession}, {luxury_category} luxury. AI Value: ₹ {prediction:.2f} Crores. Comparables: {comps_text}"""
+                    human_prompt = f"""
+                    Target Property Details:
+                    - Type: {bedRoom} BHK {property_type}
+                    - Location: {sector}
+                    - Area: {built_up_area} sq.ft.
+                    - Age: {agePossession}
+                    - Luxury Category: {luxury_category}
                     
-                    response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)])
+                    AI Estimated Value: ₹ {prediction:.2f} Crores
+                    
+                    Real Database Comparables:
+                    {comps_text}
+                    """
+                    
+                    # 5. Call the LLM
+                    response = llm.invoke([
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=human_prompt)
+                    ])
+                    
+                    # 6. Parse and Display the JSON response
                     report_data = json.loads(response.content)
                     
+                    # Render the report beautifully in the UI
                     st.success(f"Report Generated! Estimated Value: ₹ {prediction:.2f} Crores")
                     
-                    with st.expander("📄 Executive Summary", expanded=True): st.write(report_data.get("summary", ""))
+                    with st.expander("📄 Executive Summary", expanded=True):
+                        st.write(report_data.get("summary", ""))
+                        
                     with st.expander("📊 Market Comparables (Comps)"):
                         st.write(report_data.get("comps", ""))
-                        st.info(f"**Raw DB Data:**\n{comps_text}")
+                        st.info(f"**Raw Data found in DB:**\n{comps_text}")
                         
                     colA, colB = st.columns(2)
                     with colA:
